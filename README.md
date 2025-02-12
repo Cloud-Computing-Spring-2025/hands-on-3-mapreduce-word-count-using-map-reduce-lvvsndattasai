@@ -1,118 +1,192 @@
+# Word Count Using Hadoop MapReduce
 
-# WordCount-Using-MapReduce-Hadoop
+## **Project Overview**
+This project implements a **Word Count** program using **Hadoop MapReduce**. The goal is to process a text dataset, count the occurrences of each word, and output the results in descending order of frequency. The project is executed using a **Docker-based Hadoop cluster**.
 
-This repository is designed to test MapReduce jobs using a simple word count dataset.
+---
 
-## Objectives
+## **Approach and Implementation**
+### **1. Mapper Class (`WordMapper.java`)**
+The **Mapper** processes each line of input text and emits `(word, 1)` key-value pairs.
+- **Tokenization:** Splits text into words.
+- **Normalization:** Converts words to lowercase and removes punctuation.
+- **Key-Value Emission:** Outputs `<word, 1>` for each word.
 
-By completing this activity, students will:
+```java
+public class WordMapper extends MapReduceBase 
+    implements Mapper<LongWritable, Text, Text, IntWritable> {
+    
+    private final static IntWritable one = new IntWritable(1);
+    private Text word = new Text();
 
-1. **Understand Hadoop's Architecture:** Learn how Hadoop's distributed file system (HDFS) and MapReduce framework work together to process large datasets.
-2. **Build and Deploy a MapReduce Job:** Gain experience in compiling a Java MapReduce program, deploying it to a Hadoop cluster, and running it using Docker.
-3. **Interact with Hadoop Ecosystem:** Practice using Hadoop commands to manage HDFS and execute MapReduce jobs.
-4. **Work with Docker Containers:** Understand how to use Docker to run and manage Hadoop components and transfer files between the host and container environments.
-5. **Analyze MapReduce Job Outputs:** Learn how to retrieve and interpret the results of a MapReduce job.
-
-## Setup and Execution
-
-### 1. **Start the Hadoop Cluster**
-
-Run the following command to start the Hadoop cluster:
-
-```bash
-docker compose up -d
+    public void map(LongWritable key, Text value, OutputCollector<Text, IntWritable> output, Reporter reporter)
+            throws IOException {
+        StringTokenizer tokenizer = new StringTokenizer(value.toString());
+        while (tokenizer.hasMoreTokens()) {
+            word.set(tokenizer.nextToken().replaceAll("[^a-zA-Z]", "").toLowerCase()); // Normalize
+            if (!word.toString().isEmpty()) {
+                output.collect(word, one);
+            }
+        }
+    }
+}
 ```
 
-### 2. **Build the Code**
+---
 
-Build the code using Maven:
+### **2. Reducer Class (`WordReducer.java`)**
+The **Reducer** aggregates word counts from the **Mapper** output.
+- **Combines word occurrences** for each unique word.
+- **Emits final `(word, count)` pairs**.
 
-```bash
-mvn install
+```java
+public class WordReducer extends MapReduceBase 
+    implements Reducer<Text, IntWritable, Text, IntWritable> {
+    
+    public void reduce(Text key, Iterator<IntWritable> values, 
+            OutputCollector<Text, IntWritable> output, Reporter reporter) 
+            throws IOException {
+        int sum = 0;
+        while (values.hasNext()) {
+            sum += values.next().get();
+        }
+        output.collect(key, new IntWritable(sum));
+    }
+}
 ```
 
-### 3. **Move JAR File to Shared Folder**
+---
 
-Move the generated JAR file to a shared folder for easy access:
+### **3. Job Driver (`Controller.java`)**
+This class configures and **executes the MapReduce job**.
+- **Defines input & output paths.**
+- **Sets Mapper, Reducer, and Combiner classes.**
+- **Executes the job on Hadoop.**
 
-```bash
-mv target/*.jar shared-folder/input/code/
+```java
+public class Controller {
+    public static void main(String[] args) throws IOException {
+        JobConf conf = new JobConf(Controller.class);
+        conf.setJobName("WordCount");
+
+        conf.setOutputKeyClass(Text.class);
+        conf.setOutputValueClass(IntWritable.class);
+
+        conf.setMapperClass(WordMapper.class);
+        conf.setCombinerClass(WordReducer.class);
+        conf.setReducerClass(WordReducer.class);
+
+        conf.setInputFormat(TextInputFormat.class);
+        conf.setOutputFormat(TextOutputFormat.class);
+
+        FileInputFormat.setInputPaths(conf, new Path(args[0]));
+        FileOutputFormat.setOutputPath(conf, new Path(args[1]));
+
+        JobClient.runJob(conf);
+    }
+}
 ```
 
-### 4. **Copy JAR to Docker Container**
+---
 
-Copy the JAR file to the Hadoop ResourceManager container:
-
+## **Execution Steps**
+### **1️⃣ Start the Hadoop Cluster**
+Run:
 ```bash
-docker cp shared-folder/input/code/<your-jar-file>.jar resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
+docker-compose up -d
 ```
 
-### 5. **Move Dataset to Docker Container**
+### **2️⃣ Build the Project**
+```bash
+mvn clean install
+```
 
-Copy the dataset to the Hadoop ResourceManager container:
+### **3️⃣ Move the JAR File to a Shared Folder**
+```bash
+mv target/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar shared-folder/input/code/
+```
 
+### **4️⃣ Copy JAR File to Hadoop Container**
+```bash
+docker cp shared-folder/input/code/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
+```
+
+### **5️⃣ Prepare Input Dataset**
+Create `input.txt` with the following content:
+```
+Big Data is amazing
+Hadoop is a part of Big Data
+Machine Learning and Big Data work together
+Cloud Computing powers Big Data analytics
+```
+Copy it to the Hadoop container:
 ```bash
 docker cp shared-folder/input/data/input.txt resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
 ```
 
-### 6. **Connect to Docker Container**
-
-Access the Hadoop ResourceManager container:
-
+### **6️⃣ Upload Input File to HDFS**
+Inside the **Hadoop container**:
 ```bash
 docker exec -it resourcemanager /bin/bash
-```
-
-Navigate to the Hadoop directory:
-
-```bash
-cd /opt/hadoop-3.2.1/share/hadoop/mapreduce/
-```
-
-### 7. **Set Up HDFS**
-
-Create a folder in HDFS for the input dataset:
-
-```bash
 hadoop fs -mkdir -p /input/dataset
+hadoop fs -put /opt/hadoop-3.2.1/share/hadoop/mapreduce/input.txt /input/dataset
 ```
 
-Copy the input dataset to the HDFS folder:
-
+### **7️⃣ Run the MapReduce Job**
 ```bash
-hadoop fs -put ./input.txt /input/dataset
+hadoop jar /opt/hadoop-3.2.1/share/hadoop/mapreduce/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar com.example.controller.Controller /input/dataset/input.txt /output
 ```
 
-### 8. **Execute the MapReduce Job**
-
-Run your MapReduce job using the following command:
-
-```bash
-hadoop jar /opt/hadoop-3.2.1/share/hadoop/mapreduce/<your-jar-file>.jar com.example.controller.Controller /input/dataset/input.txt /output
-```
-
-### 9. **View the Output**
-
-To view the output of your MapReduce job, use:
-
+### **8️⃣ View the Output in HDFS**
 ```bash
 hadoop fs -cat /output/*
 ```
 
-### 10. **Copy Output from HDFS to Local OS**
+### **9️⃣ Copy Output from HDFS to Local Machine**
+```bash
+hdfs dfs -get /output /opt/hadoop-3.2.1/share/hadoop/mapreduce/
+exit
+docker cp resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/output/ shared-folder/output/
+cat shared-folder/output/part-00000
+```
 
-To copy the output from HDFS to your local machine:
+---
 
-1. Use the following command to copy from HDFS:
-    ```bash
-    hdfs dfs -get /output /opt/hadoop-3.2.1/share/hadoop/mapreduce/
-    ```
+## **Challenges Faced & Solutions**
+| Challenge | Solution |
+|-----------|----------|
+| **Docker permission issues when copying files** | Used `sudo` while copying shared files. |
+| **HDFS file overwrite error** | Removed `/output` before running MapReduce again (`hadoop fs -rm -r /output`). |
+| **Missing `input.txt` in the container** | Ensured it was correctly copied to the correct Hadoop path before `hadoop fs -put`. |
 
-2. use Docker to copy from the container to your local machine:
-   ```bash
-   exit 
-   ```
-    ```bash
-    docker cp resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/output/ shared-folder/output/
-    ```
-3. Commit and push to your repo so that we can able to see your output
+---
+
+## **Sample Input & Output**
+### **📌 Sample Input (`input.txt`)**
+```
+Big Data is amazing
+Hadoop is a part of Big Data
+Machine Learning and Big Data work together
+Cloud Computing powers Big Data analytics
+```
+
+### **📌 Expected Output**
+```
+Big 3
+Data 3
+is 1
+amazing 1
+Hadoop 1
+a 1
+part 1
+Machine 1
+Learning 1
+and 1
+work 1
+together 1
+Cloud 1
+Computing 1
+powers 1
+analytics 1
+```
+
